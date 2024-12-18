@@ -1,0 +1,13 @@
+&spi3 {
+    status = "okay";
+    cs-gpios = <&gpio1 12 GPIO_ACTIVE_LOW>;
+
+    st25: st25@0 {
+        compatible = "st,st25r100";
+        status = "okay";
+        reg = <0x0>;
+        spi-max-frequency = <1000000>;
+        reset-gpios = <&gpio1 10 GPIO_ACTIVE_HIGH>;
+        irq-gpios = <&gpio0 3 GPIO_ACTIVE_HIGH>;
+    };
+};

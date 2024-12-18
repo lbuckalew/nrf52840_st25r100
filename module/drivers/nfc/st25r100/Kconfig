@@ -1,0 +1,2 @@
+config ST25R100
+    bool "Enables the ST25R100 NFC chip."

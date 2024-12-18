@@ -1,0 +1,7 @@
+name: optix_zephyr_module
+build:
+  cmake: .
+  kconfig: Kconfig
+  settings:
+    board_root: ../
+    dts_root: .

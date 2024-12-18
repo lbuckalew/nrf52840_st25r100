@@ -1,0 +1,5 @@
+if(CONFIG_ST25R100)
+    zephyr_include_directories(.)
+    zephyr_library()
+    zephyr_library_sources(st25r100_drv.c)
+endif()

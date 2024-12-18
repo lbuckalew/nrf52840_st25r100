@@ -1,0 +1,22 @@
+description: ST25R100 NFC Module
+
+compatible: "st,st25r100"
+
+include: spi-device.yaml
+
+properties:
+
+  reset-gpios:
+    type: phandle-array
+    required: true
+    description: |
+      Pull this pin high to keep the device in reset state
+
+  irq-gpios:
+    type: phandle-array
+    required: true
+    description: |
+      Active high when an interrupt source register needs to be checked. This will not clear until
+      any sources that triggered the interrupt have had their correlated irq registers read. (If
+      two interrupt conditions are met before an irq source register is read you must read both
+      before this line returns to inactive).
