@@ -1,0 +1,9 @@
+zephyr_library()
+zephyr_library_sources(
+        rfal_rfst25r200.c
+        st25r200.c
+        st25r200_com.c
+        st25r200_irq.c
+        timer.c
+)
+zephyr_include_directories(.)

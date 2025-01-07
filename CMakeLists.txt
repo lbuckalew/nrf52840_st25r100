@@ -9,4 +9,8 @@ list(APPEND ZEPHYR_EXTRA_MODULES ${EXTERNAL_Z_MODULE})
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(st25r100_testing)
 
-target_sources(app PRIVATE src/main.c)
+target_include_directories(app PRIVATE src)
+target_sources(app PRIVATE
+                src/demo_polling.c
+                src/main.c
+)
