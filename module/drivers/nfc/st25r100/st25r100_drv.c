@@ -16,6 +16,23 @@
 #define ST25_REG_REGULATOR_CFG 0x02
 #define ST25_REGULATOR_CFG_REGD_FIELD 0b11100000
 
+#define ST25_REG_TX_DRIVER 0x03
+#define ST25_DRES 0b1111
+
+#define ST25_REG_TX_MOD1 0x04
+#define ST25_TX_MOD1_REG_AM 0b1
+#define ST25_TX_MOD1_INDEX 0b11110000
+
+#define ST25_REG_RX_DIGITAL 0x08
+#define ST25_RX_DIGITAL_LPF 0b111 << 4
+#define ST25_RX_DIGITAL_HPF 0b11 << 2
+#define ST25_RX_DIGITAL_AGC 0b1 << 7
+
+#define ST25_REG_CORREL_1 0x09
+
+#define ST25_REG_CORREL_5 0x0D
+#define ST25_CORREL_5_FSUBC 1 << 4
+
 #define ST25_REG_DR1 0x0F
 #define ST25_DR1_OSC_OK_FIELD 0b00100000
 
@@ -23,11 +40,18 @@
 #define ST25_PROTOCOL_MODE_FIELD 0b00001111
 #define ST25_PROTOCOL_MODE_NFCV 0b101
 
+#define ST25_REG_TX_PROTOCOL 0x13
+#define ST25_TX_PROTOCOL_TR_AM 0b111 << 4
+
 #define ST25_REG_FIFO_FRAME1 0x34
 #define ST25_FIFO_FRAME2_NTXMSB_FIELD 0xFF
 
 #define ST25_REG_FIFO_FRAME2 0x35
 #define ST25_FIFO_FRAME2_NTXLSB_FIELD 0b11111000
+
+#define ST25_REG_FIFO_SR1 0x36
+
+#define ST25_REG_FIFO_SR2 0x37
 
 #define ST25_REG_IRQ_SR1 0x3C
 
@@ -42,9 +66,12 @@
 
 #define ST25_CMD_SET_DEFAULT 0x60
 #define ST25_CMD_STOP_ACT 0x62
+#define ST25_CMD_CLR_FIFO 0x64
 #define ST25_CMD_CLR_RX_GAIN 0X66
 #define ST25_CMD_ADJ_REG 0x68
 #define ST25_CMD_TX_DATA 0x6A
+#define ST25_CMD_TX_EOF 0x6C
+#define ST25_CMD_UNMASK_RX 0x72
 
 struct gpio_callback irq_cb_data;
 
@@ -95,15 +122,15 @@ static int st25_read_reg(const struct device *dev, uint8_t reg, uint8_t *buff, s
     const struct nfc_cfg *cfg = dev->config;
 
     uint8_t tx_buffer = reg | 0x80; // Set MSB read bit to 1
-	struct spi_buf tx_spi_buf			= {.buf = (void *)&tx_buffer, .len = 1};
-	struct spi_buf_set tx_spi_buf_set 	= {.buffers = &tx_spi_buf, .count = 1};
-	struct spi_buf rx_spi_bufs 			= {.buf = buff, .len = len};
-	struct spi_buf_set rx_spi_buf_set	= {.buffers = &rx_spi_bufs, .count = 1};
+	struct spi_buf tx_spi_buf = {.buf = (void *)&tx_buffer, .len = 1};
+	struct spi_buf_set tx_spi_buf_set = {.buffers = &tx_spi_buf, .count = 1};
+	struct spi_buf rx_spi_bufs = {.buf = buff, .len = len};
+	struct spi_buf_set rx_spi_buf_set = {.buffers = &rx_spi_bufs, .count = 1};
 
-	/* STEP 4.2 - Call the transceive function */
 	err = spi_transceive_dt(&cfg->spi_bus, &tx_spi_buf_set, &rx_spi_buf_set);
-	if (err < 0) {
-		LOG_ERR("spi_transceive_dt() failed, err: %d", err);
+	if (err < 0)
+    {
+		LOG_ERR("spi transceive failed, err: %d", err);
 		return err;
 	}
 }
@@ -225,14 +252,38 @@ static int st25_ready_mode(const struct device *dev)
         return -ETIME;
     }
 
-    // Use direct command to adjust regulators
+    // Enable TX, RX, and AM regulator
     uint8_t data[2];
     rc = st25_read_reg(dev, ST25_REG_OP, data, 2);
-    data[1] |= (FIELD_PREP(ST25_OP_RX_EN_FIELD, 1) | FIELD_PREP(ST25_OP_TX_EN_FIELD, 1));
+    data[1] |= (FIELD_PREP(ST25_OP_RX_EN_FIELD, 1) |
+        FIELD_PREP(ST25_OP_TX_EN_FIELD, 1) |
+        FIELD_PREP(ST25_OP_AM_EN_FIELD, 1));
+    LOG_ERR("writing %x to OP register", data[1]);
     rc = st25_write_reg(dev, ST25_REG_OP, &data[1], 1);
 
-    uint8_t regd = FIELD_PREP(ST25_REGULATOR_CFG_REGD_FIELD, 4);
-    rc = st25_write_reg(dev, ST25_REG_REGULATOR_CFG, &regd, 1);
+    // Configure AM regulator
+    temp = FIELD_PREP(ST25_TX_MOD1_REG_AM, 1) | FIELD_PREP(ST25_TX_MOD1_INDEX, 4);
+    rc = st25_write_reg(dev, ST25_REG_TX_MOD1, &temp, 1);
+    temp = FIELD_PREP(ST25_TX_PROTOCOL_TR_AM, 7);
+    rc = st25_write_reg(dev, ST25_REG_TX_PROTOCOL, &temp, 1);
+
+    // Set RFO resistance
+    temp = FIELD_PREP(ST25_DRES, 0);
+    rc = st25_write_reg(dev, ST25_REG_TX_DRIVER, &temp, 1);
+
+    // Configure correlator regulator 5
+    temp = FIELD_PREP(ST25_CORREL_5_FSUBC, 1) + 3;
+    rc = st25_write_reg(dev, ST25_REG_CORREL_5, &temp, 1);
+
+    // Configure rx digital filters
+    temp = FIELD_PREP(ST25_RX_DIGITAL_LPF, 2) |
+        FIELD_PREP(ST25_RX_DIGITAL_HPF, 0) |
+        FIELD_PREP(ST25_RX_DIGITAL_AGC, 1);
+    rc = st25_write_reg(dev, ST25_REG_RX_DIGITAL, &temp, 1);
+
+    // Configure correlator 1
+    temp = 0xC0;
+    rc = st25_write_reg(dev, ST25_REG_CORREL_1, &temp, 1);
 
     LOG_INF("Adjust regulators command");
     rc = st25_write_cmd(dev, ST25_CMD_ADJ_REG);
@@ -258,18 +309,29 @@ static int st25_read_tag(const struct device *dev)
 
     // Configure timers
 
+    // Clear FIFO
+    rc = st25_write_cmd(dev, ST25_CMD_CLR_FIFO);
+
     // Define TX length
-    uint8_t bytes_to_tx = FIELD_PREP(ST25_FIFO_FRAME2_NTXLSB_FIELD, 1);
+    int read_cmd_len = 3;
+    uint8_t bytes_to_tx = FIELD_PREP(ST25_FIFO_FRAME2_NTXLSB_FIELD, read_cmd_len) | FIELD_PREP(0b111, 1);
     rc = st25_write_reg(dev, ST25_REG_FIFO_FRAME2, &bytes_to_tx, 1);
 
     // Write TX bytes to FIFO
-    uint8_t tx_bytes = 0x20;
-    rc = st25_write_reg(dev, ST25_REG_FIFO, &tx_bytes, 1);
+    uint8_t tx_bytes[] = {0x02, 0x20, 0x01};
+    rc = st25_write_reg(dev, ST25_REG_FIFO, tx_bytes, 3);
+
+    // uint8_t read1[5] = {0};
+    // rc = st25_read_reg(dev, ST25_REG_FIFO, read1, 3);
+    // LOG_ERR("%x %x %x", read1[1], read1[2], read1[3]);
 
     // Send direct command to tx
+    // rc = st25_write_cmd(dev, ST25_CMD_UNMASK_RX);
+
     LOG_INF("TX data command");
     rc = st25_write_cmd(dev, ST25_CMD_TX_DATA);
 
+    rc = st25_write_cmd(dev, ST25_CMD_TX_EOF);
 }
 
 static int st25_config_gpio(const struct device *dev)
@@ -343,9 +405,10 @@ static int st25r100_init(const struct device *dev)
 
     // TEMP
     st25_ready_mode(dev);
-
-    k_msleep(2000);
     st25_read_tag(dev);
+
+    struct nfc_cfg *c = dev->config;
+    LOG_WRN("irq pin: %d", gpio_pin_get_dt(&c->irq_gpio));
 
     return 0;
 }
