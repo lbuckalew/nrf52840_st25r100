@@ -3,8 +3,7 @@ NCS v2.7.0
 
 # NFCV tag reader
 
-## RFAL Library
-Test
+## Header2
 
 - rfalNfcInitialize()
     - rfalAnalogConfigInitialize()
