@@ -38,7 +38,3 @@ NCS v2.7.0
 - rfalNfcDeactivate(RFAL_NFC_DEACTIVATE_IDLE)
     - rfalFieldOff()
     - Clears register bits tx_en and rx_en in the configuration register (@0x00)
-
-## RFAL Library References
-
-### RFAL Analog Configuration Table Structure
