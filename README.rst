@@ -2,7 +2,9 @@ Testing driver for st25r100 NFC transceiver on an nRF52840dk.
 NCS v2.7.0
 
 # NFCV tag reader
+
 ## RFAL Library OOP
+
 - Chip initialization
   - rfalNfcInitialize()
     - rfalAnalogConfigInitialize()
@@ -39,7 +41,9 @@ NCS v2.7.0
       - Clears register bits tx_en and rx_en in the configuration register (@0x00)
 
 ## RFAL Library References
+
 ### RFAL Analog Configuration Table Structure
+
 ```
 /*
  ******************************************************************************
@@ -77,8 +81,10 @@ NCS v2.7.0
  ******************************************************************************
  */
 ```
+
 ### discParam
-```c
+
+```
 /*! Discovery parameters                                                                                                             */
 typedef struct{
     rfalComplianceMode     compMode;                         /*!< Compliancy mode to be used                                         */
@@ -108,7 +114,8 @@ typedef struct{
 ```
 
 ### rfalNfc
-```c
+
+```
 /*! RFAL NFC instance                                                                                */
 typedef struct{
     rfalNfcState            state;              /*!< Main state                                      */
