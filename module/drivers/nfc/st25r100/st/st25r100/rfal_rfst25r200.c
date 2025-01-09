@@ -1523,10 +1523,16 @@ static void rfalTransceiveTx( void )
             
             /* Set the number of full bytes and bits to be transmitted */
             st25r200SetNumTxBits( gRFAL.TxRx.ctx.txBufLen );
+            printk("num bytes %d\n", gRFAL.TxRx.ctx.txBufLen);
             
             /* Load FIFO with total length or FIFO's maximum */
             gRFAL.fifo.bytesWritten = RFAL_MIN( gRFAL.fifo.bytesTotal, ST25R200_FIFO_DEPTH );
             st25r200WriteFifo( gRFAL.TxRx.ctx.txBuf, gRFAL.fifo.bytesWritten );
+            for (int i=0; i<gRFAL.fifo.bytesWritten; i++)
+            {
+                printk("%x ", gRFAL.TxRx.ctx.txBuf[i]);
+            }
+            printk("\n");
         
             /*Check if Observation Mode is enabled and set it on ST25R391x */
             rfalCheckEnableObsModeTx();

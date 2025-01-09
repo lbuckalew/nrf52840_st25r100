@@ -797,27 +797,23 @@ ReturnCode rfalNfcvPollerTransceiveReq( uint8_t cmd, uint8_t flags, uint8_t para
     /* Compute Request Command */
     req.REQ_FLAG  = (uint8_t)(flags & (~((uint32_t)RFAL_NFCV_REQ_FLAG_ADDRESS)));
     req.CMD       = cmd;
-    printk("flag: %x cmd: %x\n", req.REQ_FLAG, req.CMD);
     
     /* Prepend parameter on certain proprietary requests: IC Manuf, Parameters */
     if( param != RFAL_NFCV_PARAM_SKIP )
     {
         req.payload.data[msgIt++] = param;         /* RFAL_NFCV_PARAM_LEN */
-        printk("Param: %x\n", param);
     }
     
     /* Check if Request is to be sent in Addressed mode. Select mode flag shall be set by user */
-    if( uid != NULL )
-    {
-        req.REQ_FLAG |= (uint8_t)RFAL_NFCV_REQ_FLAG_ADDRESS;
-        RFAL_MEMCPY( &req.payload.data[msgIt], uid, RFAL_NFCV_UID_LEN );
-        msgIt += RFAL_NFCV_UID_LEN;
-        printk("uid: %x\n", )
-    }
+    // if( uid != NULL )
+    // {
+    //     req.REQ_FLAG |= (uint8_t)RFAL_NFCV_REQ_FLAG_ADDRESS;
+    //     RFAL_MEMCPY( &req.payload.data[msgIt], uid, RFAL_NFCV_UID_LEN );
+    //     msgIt += RFAL_NFCV_UID_LEN;
+    // }
     
     if( dataLen > 0U )
     {
-        printk("bn %x\n", *data);
         RFAL_MEMCPY( &req.payload.data[msgIt], data, dataLen );
         msgIt += (uint8_t)dataLen;
     }
@@ -831,13 +827,7 @@ ReturnCode rfalNfcvPollerTransceiveReq( uint8_t cmd, uint8_t flags, uint8_t para
         specialFrame = true;
     }
     
-    
     /* Transceive Command */
-    for (int i=0; i<(RFAL_NFCV_CMD_LEN + RFAL_NFCV_FLAG_LEN +(uint16_t)msgIt); i++)
-    {
-        printk("%x ", *((uint8_t*)&req + i));
-    }
-    printk("\n");
     ret = rfalTransceiveBlockingTxRx( (uint8_t*)&req, (RFAL_NFCV_CMD_LEN + RFAL_NFCV_FLAG_LEN +(uint16_t)msgIt), rxBuf, rxBufLen, rcvLen, RFAL_TXRX_FLAGS_DEFAULT, (specialFrame ? RFAL_NFCV_FDT_EOF : RFAL_NFCV_FDT_MAX) );
     
     /* If the Option Flag | Special Frame is set in certain commands an EOF needs to be sent whithin  FDTV,EOF to retrieve the VICC response     Digital 2.3  9.7.4    ISO15693-3 2009  10.4.2 & 10.4.3 & 10.4.5 */

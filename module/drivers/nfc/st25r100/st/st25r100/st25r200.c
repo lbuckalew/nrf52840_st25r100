@@ -542,6 +542,8 @@ ReturnCode st25r200PerformCollisionAvoidance( void )
 /*******************************************************************************/
 void st25r200SetNumTxBits( uint16_t nBits )
 {
+    printk("Frame 1: %x ", (uint8_t)((nBits >> 8) & 0xFFU));
+    printk("Frame 2: %x ", (uint8_t)((nBits >> 0) & 0xFFU));
     st25r200WriteRegister( ST25R200_REG_TX_FRAME2, (uint8_t)((nBits >> 0) & 0xFFU) );
     st25r200WriteRegister( ST25R200_REG_TX_FRAME1, (uint8_t)((nBits >> 8) & 0xFFU) );
 }
