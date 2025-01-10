@@ -4,41 +4,94 @@ NCS v2.7.0
 # NFCV tag reader
 
 ## RFAL Library Tracing
+1. Initialization
+  - rfalNfcInitialize()
+    - rfalAnalogConfigInitialize()
+    - rfalInitialize()
+      - st25r200Initialize()
+        - Direct command to set default (0x60)
+        - Check chip ID
+        - Initialize interrupts
+        - st25r200OscOn()
+          - Clear and enable interrupts
+          - Set en bit in operation register (0x00)
+          - Wait for oscillator interrupt
+          - Disable osc interrupt
+          - st25r200WaitAgd()
+            - Check that agd_ok bit is set in display register 1 (0x0F)
+        - Clear tx_en and rx_en bits in operation register (0x00)
+        - Disable interrupts
+        - Clear interrupts
+        - rfalSetAnalogConfig((RFAL_ANALOG_CONFIG_TECH_CHIP | RFAL_ANALOG_CONFIG_CHIP_INIT))
+          - Set miso_pd1 and miso_pd2 bits in general register (0x01)
+          - Set am_en bit in operation register (0x00)
+          - Set reg_am and am_mod bits in tx modulation register (0x04)
+          - Clear d_res bits to 0 in tx driver register (0x03)
+          - Set en_subc bit in correlator 5 register (0x0D)
+          - Set afe_gain_td bits to 4 [34dB] in analog register 2 (0x07)
+        - rfalCalibrate() regulators
+          - st25r200AdjustRegulators()
+            - Clear reg_s bit in general register (0x01)
+            - Execute adjust regulators direct command (0x68)
+2. Tag Detect
+  - rfalNfcPollTechDetection()
+    - rfalFieldOnAndStartGT()
+      - Check if osc is on with en bit of operation register (0x00)
+      - rfalSetAnalogConfig(RFAL_ANALOG_CONFIG_CHIP_FIELD_ON)
+        - st25r200TxRxOn()
+          - Set tx_en and rx_en bits in operation register
+      - Start a timer for guard time if needed
+    - rfalNfcvPollerInitialize()
+      - rfalSetMode(RFAL_MODE_POLL_NFCV, RFAL_BR_26p48, RFAL_BR_26p48)
+        - Set om bits to 5 [iso15869 mode]
+        - Set tr_am bit to 0 [OOK modulation] in protocol tx 1 register (0x13)
+        - Set lpf and hpf bits to 0x08 [lpf 2 hpf 0] in RX digital register (0x08)
+        - Set iir_coef 1 and 2 bits to 0xC0 [coef2=0xC coef1=0] in correlator 1 register (0x09)
+        - rfalSetBitRate()
+          - Dont change (left at default 24 kbps)
+      - rfalSetGT( RFAL_GT_NFCV )
+        - gRFAL.timings.GT = 0x5
+      - rfalSetFDTListen( RFAL_FDT_LISTEN_NFCV_POLLER )
+        - gRFAL.timings.FDTListen = 4310
+      - rfalSetFDTPoll( RFAL_FDT_POLL_NFCV_POLLER )
+        - gRFAL.timings.FDTPoll = 4192
+    - rfalFieldOnAndStartGT()
+      - Field on (tx_en rx_en)
+      - Start a guard time timer if necessary nfcv should be 1ms but at most 5ms
+    - Wait for guard timer to expire
+    - rfalNfcvPollerCheckPresence()
+      - rfalNfcvPollerInventory()
+        - rfalISO15693TransceiveAnticollisionFrame()
+          - Set coll_lvl bits to 7 in correlator register 4 (0x0C)
+          - Set antctl bit in RX protocol register 1 (0x16)
+          - Send {0x02, 0x26, 0x01} to FIFO
+3. Tag Read
+  - demoNfcv()
+    - rfalNfcvPollerReadSingleBlock()
+      - rfalNfcvPollerTransceiveReq()
+        - rfalTransceiveBlockingTxRx()
+          - rfalTransceiveBlockingTx()
+            - rfalStartTransceive()
+              - rfalPrepareTransceive()
+                - Send direct command to stop activities (0x62)
+                - Send direct command to clear rx gain (0x66)
+                - gRFAL.callbacks.preTxRx()
+                - Set a_tx_par and tx_crc bits in tx protocol 1 register (0x13)
+                - Set the a_rx_par and rx_crc bits in rx protocol 1 register (0x16)
+                - Set the agc_en bit in the rx digitial 1 register (0x08)
+              - Send direct command to unmask rx data (0x72)
+              - Write the number of bytes to be transmitted to the tx framE registers (0x34) & (0x35) *note: no extra bits are sent, only full bytes
+              - Write command to read block to FIFO {0x02, 0x20, 0x<block_number>}
+              - Send direct command to transmit (0x6A)
+          - rfalTransceiveRunBlockingTx()
+        - Wait for rx_s and rx_e
+        - rfalFIFOStatusGetNumBytes()
+        - st25r200ReadFifo()
 
-- rfalNfcInitialize()
-  - rfalAnalogConfigInitialize()
-  - rfalInitialize()
-    - st25r200Initialize()
-      - Direct command to set default (0x60)
-      - Check chip ID
-      - Initialize interrupts
-      - st25r200OscOn()
-        - Clear and enable interrupts
-        - Set en bit in operation register (0x00)
-        - Wait for oscillator interrupt
-        - Disable osc interrupt
-        - st25r200WaitAgd()
-          - Check that agd_ok bit is set in display register 1 (0x0F)
-      - Clear tx_en and rx_en bits in operation register (0x00)
-      - Disable interrupts
-      - Clear interrupts
-      - rfalSetAnalogConfig((RFAL_ANALOG_CONFIG_TECH_CHIP | RFAL_ANALOG_CONFIG_CHIP_INIT))
-        - Set miso_pd1 and miso_pd2 bits in general register (0x01)
-        - Set am_en bit in operation register (0x00)
-        - Set reg_am and am_mod bits in tx modulation register (0x04)
-        - Set d_res bits in tx driver register to 0
-        - Set en_subc bit in correlator 5 register (0x0D)
-        - Set afe_gain_td bits to 4 [34dB] in analog register 2 (0x07)
-      - rfalCalibrate() regulators
-        - st25r200AdjustRegulators()
-          - Clear reg_s bit in general register (0x01)
-          - Execute adjust regulators direct command (0x68)
-- rfalNfcDiscover(&[discParam](#discParam))
-  - Initializes and validates [rfalNfc struct](#rfalNfc)
-  - rfalNfcDeactivation()
-- rfalNfcDeactivate(RFAL_NFC_DEACTIVATE_IDLE)
-  - rfalFieldOff()
-  - Clears register bits tx_en and rx_en in the configuration register (@0x00)
+
+
+
+
 
 ## RFAL References
 

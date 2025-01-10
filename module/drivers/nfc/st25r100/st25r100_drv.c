@@ -1,3 +1,4 @@
+# include "st25r100_drv.h"
 #include "st25r100_dev_structs.h"
 
 #define DT_DRV_COMPAT st_st25r100
@@ -5,73 +6,6 @@
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/logging/log.h>
-
-#define ST25_REG_OP 0x00
-#define ST25_OP_WU_EN_FIELD 0b00000001
-#define ST25_OP_RD_EN_FIELD 0b00000010
-#define ST25_OP_AM_EN_FIELD 0b00001000
-#define ST25_OP_RX_EN_FIELD 0b00010000
-#define ST25_OP_TX_EN_FIELD 0b00100000
-
-#define ST25_REG_REGULATOR_CFG 0x02
-#define ST25_REGULATOR_CFG_REGD_FIELD 0b11100000
-
-#define ST25_REG_TX_DRIVER 0x03
-#define ST25_DRES 0b1111
-
-#define ST25_REG_TX_MOD1 0x04
-#define ST25_TX_MOD1_REG_AM 0b1
-#define ST25_TX_MOD1_INDEX 0b11110000
-
-#define ST25_REG_RX_DIGITAL 0x08
-#define ST25_RX_DIGITAL_LPF 0b111 << 4
-#define ST25_RX_DIGITAL_HPF 0b11 << 2
-#define ST25_RX_DIGITAL_AGC 0b1 << 7
-
-#define ST25_REG_CORREL_1 0x09
-
-#define ST25_REG_CORREL_5 0x0D
-#define ST25_CORREL_5_FSUBC 1 << 4
-
-#define ST25_REG_DR1 0x0F
-#define ST25_DR1_OSC_OK_FIELD 0b00100000
-
-#define ST25_REG_PROTOCOL 0x12
-#define ST25_PROTOCOL_MODE_FIELD 0b00001111
-#define ST25_PROTOCOL_MODE_NFCV 0b101
-
-#define ST25_REG_TX_PROTOCOL 0x13
-#define ST25_TX_PROTOCOL_TR_AM 0b111 << 4
-
-#define ST25_REG_FIFO_FRAME1 0x34
-#define ST25_FIFO_FRAME2_NTXMSB_FIELD 0xFF
-
-#define ST25_REG_FIFO_FRAME2 0x35
-#define ST25_FIFO_FRAME2_NTXLSB_FIELD 0b11111000
-
-#define ST25_REG_FIFO_SR1 0x36
-
-#define ST25_REG_FIFO_SR2 0x37
-
-#define ST25_REG_IRQ_SR1 0x3C
-
-#define ST25_REG_IRQ_SR2 0x3D
-
-#define ST25_REG_IRQ_SR3 0x3E
-
-#define ST25_REG_ID 0x3F
-#define ST25_VAL_ID 0xA9
-
-#define ST25_REG_FIFO 0x5F
-
-#define ST25_CMD_SET_DEFAULT 0x60
-#define ST25_CMD_STOP_ACT 0x62
-#define ST25_CMD_CLR_FIFO 0x64
-#define ST25_CMD_CLR_RX_GAIN 0X66
-#define ST25_CMD_ADJ_REG 0x68
-#define ST25_CMD_TX_DATA 0x6A
-#define ST25_CMD_TX_EOF 0x6C
-#define ST25_CMD_UNMASK_RX 0x72
 
 struct gpio_callback irq_cb_data;
 
@@ -114,17 +48,17 @@ union {
     uint32_t val;
 } irq_status;
 
-
-
 static int st25_read_reg(const struct device *dev, uint8_t reg, uint8_t *buff, size_t len)
 {
     int err;
     const struct nfc_cfg *cfg = dev->config;
 
+    uint8_t temp_buf[len + 1];
+
     uint8_t tx_buffer = reg | 0x80; // Set MSB read bit to 1
 	struct spi_buf tx_spi_buf = {.buf = (void *)&tx_buffer, .len = 1};
 	struct spi_buf_set tx_spi_buf_set = {.buffers = &tx_spi_buf, .count = 1};
-	struct spi_buf rx_spi_bufs = {.buf = buff, .len = len};
+	struct spi_buf rx_spi_bufs = {.buf = temp_buf, .len = sizeof(temp_buf)};
 	struct spi_buf_set rx_spi_buf_set = {.buffers = &rx_spi_bufs, .count = 1};
 
 	err = spi_transceive_dt(&cfg->spi_bus, &tx_spi_buf_set, &rx_spi_buf_set);
@@ -133,9 +67,12 @@ static int st25_read_reg(const struct device *dev, uint8_t reg, uint8_t *buff, s
 		LOG_ERR("spi transceive failed, err: %d", err);
 		return err;
 	}
+
+    memcpy(buff, temp_buf + 1, len);
+    return 0;
 }
 
-static int st25_write_reg(const struct device *dev, uint8_t reg, uint8_t *buff, size_t len)
+static int st25_reg_write(const struct device *dev, uint8_t reg, uint8_t *buff, size_t len)
 {
     int err;
     const struct nfc_cfg *cfg = dev->config;
@@ -152,11 +89,16 @@ static int st25_write_reg(const struct device *dev, uint8_t reg, uint8_t *buff, 
 		LOG_ERR("spi_write_dt() failed, err %d", err);
 		return err;
 	}
+    LOG_INF("Writing to %x:", reg);
+    for (int i=0; i<len; i++)
+    {
+        LOG_INF("%x,", buff[i]);
+    }
 
     return err;
 }
 
-static int st25_write_cmd(const struct device *dev, uint8_t cmd)
+static int st25_cmd_write(const struct device *dev, uint8_t cmd)
 {
     int err;
     const struct nfc_cfg *cfg = dev->config;
@@ -166,6 +108,7 @@ static int st25_write_cmd(const struct device *dev, uint8_t cmd)
 	struct spi_buf_set tx_spi_buf_set = {.buffers = &tx_spi_buf, .count = 1};
 
     err = spi_write_dt(&cfg->spi_bus, &tx_spi_buf_set);
+    LOG_INF("Direct command: %x", cmd);
 	if (err < 0) {
 		LOG_ERR("spi_write_dt() failed, err %d", err);
 		return err;
@@ -174,18 +117,70 @@ static int st25_write_cmd(const struct device *dev, uint8_t cmd)
     return err;
 }
 
+static int st25_reg_set_bits(const struct device *dev, uint8_t reg, uint8_t mask)
+{
+    // Read register
+    uint8_t old_val;
+    int rc = st25_read_reg(dev, reg, &old_val, 1);
+
+    // Set new bits based on the mask
+    if (rc == 0)
+    {
+        uint8_t new_val = old_val | mask;
+        rc = st25_reg_write(dev, reg, &new_val, 1);
+        LOG_INF("Set bits @ 0x%x: 0x%x -> 0x%x", reg, old_val, new_val);
+    }
+
+    return rc;
+}
+
+static int st25_reg_clear_bits(const struct device *dev, uint8_t reg, uint8_t mask)
+{
+    // Read register
+    uint8_t old_val;
+    int rc = st25_read_reg(dev, reg, &old_val, 1);
+
+    // Set new bits based on the mask
+    if (rc == 0)
+    {
+        uint8_t new_val = old_val & ~mask;
+        rc = st25_reg_write(dev, reg, &new_val, 1);
+        LOG_INF("Clear bits @ 0x%x: 0x%x -> 0x%x", reg, old_val, new_val);
+    }
+
+    return rc;
+}
+
+static int st25_reg_write_masked(const struct device *dev, uint8_t reg, uint8_t value, uint8_t mask)
+{
+    // Read register
+    uint8_t old_val;
+    int rc = st25_read_reg(dev, reg, &old_val, 1);
+
+    // Set new bits based on the mask
+    if (rc == 0)
+    {
+        uint8_t new_val = old_val & ~mask;
+        new_val |= value;
+        rc = st25_reg_write(dev, reg, &new_val, 1);
+        LOG_INF("Write bits @ 0x%x: 0x%x -> 0x%x", reg, old_val, new_val);
+    }
+
+    return rc;
+}
+
 static void st25_irq_wh(struct k_work *w)
 {
     struct irq_work *work_ctx = CONTAINER_OF(w, struct irq_work, work);
     const struct device *dev = work_ctx->dev;
     const struct nfc_cfg *cfg = dev->config;
 
-    uint8_t data[4];
+    uint8_t data[3];
     int rc = st25_read_reg(dev, ST25_REG_IRQ_SR1, data, sizeof(data));
 
     if (rc == 0)
     {
-        irq_status.val = (data[3] << 16) + (data[2] << 8) + data[1];
+        irq_status.val = (data[2] << 16) + (data[1] << 8) + data[0];
         LOG_INF("i_rfu0: %d", irq_status.bits.i_rfu0);
         LOG_INF("i_txe: %d", irq_status.bits.i_txe);
         LOG_INF("i_rxs: %d", irq_status.bits.i_rxs);
@@ -226,17 +221,11 @@ static void st25_irq_cb()
     k_work_submit(&st25_irq_work.work);
 }
 
-static void st25_reset(const struct device *dev)
-{
-    st25_write_cmd(dev, ST25_CMD_SET_DEFAULT);
-}
-
 static int st25_ready_mode(const struct device *dev)
 {
     // Config operation and general registers to put into ready mode
-    uint8_t temp = FIELD_PREP(ST25_OP_RD_EN_FIELD, 1);
-    LOG_WRN("Ready mode writing 0x%x", temp);
-    int rc = st25_write_reg(dev, ST25_REG_OP, &temp, 1);
+    uint8_t temp = FIELD_PREP(ST25_OP_EN_FIELD, 1);
+    int rc = st25_reg_set_bits(dev, ST25_REG_OP, ST25_OP_EN_FIELD);
 
     // Wait for oscillator to establish
     int attempts = 0;
@@ -252,86 +241,147 @@ static int st25_ready_mode(const struct device *dev)
         return -ETIME;
     }
 
-    // Enable TX, RX, and AM regulator
-    uint8_t data[2];
-    rc = st25_read_reg(dev, ST25_REG_OP, data, 2);
-    data[1] |= (FIELD_PREP(ST25_OP_RX_EN_FIELD, 1) |
-        FIELD_PREP(ST25_OP_TX_EN_FIELD, 1) |
-        FIELD_PREP(ST25_OP_AM_EN_FIELD, 1));
-    LOG_ERR("writing %x to OP register", data[1]);
-    rc = st25_write_reg(dev, ST25_REG_OP, &data[1], 1);
+    // Wait for agd_ok bit
+    attempts = 0;
+    while(attempts < 5)
+    {
+        rc = st25_read_reg(dev, ST25_REG_DR1, &temp, 1);
+        if (temp & ST25_DR1_AGD_OK_FIELD) break;
+        attempts++;
+        k_msleep(5);
+    }
+    if (attempts == 5)
+    {
+        LOG_WRN("AGD bit not set in time.");
+        return -ETIME;
+    }
 
-    // Configure AM regulator
-    temp = FIELD_PREP(ST25_TX_MOD1_REG_AM, 1) | FIELD_PREP(ST25_TX_MOD1_INDEX, 4);
-    rc = st25_write_reg(dev, ST25_REG_TX_MOD1, &temp, 1);
-    temp = FIELD_PREP(ST25_TX_PROTOCOL_TR_AM, 7);
-    rc = st25_write_reg(dev, ST25_REG_TX_PROTOCOL, &temp, 1);
+    // Pullup resistor configuration
+    temp = ST25_GENERAL_MISO_PD1 | ST25_GENERAL_MISO_PD2;
+    rc = st25_reg_set_bits(dev, ST25_REG_GENERAL, temp);
 
-    // Set RFO resistance
-    temp = FIELD_PREP(ST25_DRES, 0);
-    rc = st25_write_reg(dev, ST25_REG_TX_DRIVER, &temp, 1);
+    // Enable am regulator and set modulation index to 4 (12%)
+    rc = st25_reg_set_bits(dev, ST25_REG_OP, ST25_OP_AM_EN_FIELD);
+    temp = ST25_TX_MOD1_REG_AM | FIELD_PREP(ST25_TX_MOD1_AM_INDEX, 4);
+    LOG_INF("mod1: %x", temp);
+    rc = st25_reg_write_masked(dev,
+                                ST25_REG_TX_MOD1,
+                                temp,
+                                ST25_TX_MOD1_REG_AM | ST25_TX_MOD1_AM_INDEX);
 
-    // Configure correlator regulator 5
-    temp = FIELD_PREP(ST25_CORREL_5_FSUBC, 1) + 3;
-    rc = st25_write_reg(dev, ST25_REG_CORREL_5, &temp, 1);
+    // Set RFO driver resistance
+    rc = st25_reg_clear_bits(dev, ST25_REG_TX_DRIVER, ST25_TX_DRIVER_DRES);
 
-    // Configure rx digital filters
-    temp = FIELD_PREP(ST25_RX_DIGITAL_LPF, 2) |
-        FIELD_PREP(ST25_RX_DIGITAL_HPF, 0) |
-        FIELD_PREP(ST25_RX_DIGITAL_AGC, 1);
-    rc = st25_write_reg(dev, ST25_REG_RX_DIGITAL, &temp, 1);
+    // Enable subcarrier
+    rc = st25_reg_set_bits(dev, ST25_REG_CORREL_5, ST25_CORREL_5_SUBC_EN);
 
-    // Configure correlator 1
-    temp = 0xC0;
-    rc = st25_write_reg(dev, ST25_REG_CORREL_1, &temp, 1);
+    // Set afe gain
+    temp = FIELD_PREP(ST25_ANALOG_2_AFE_TD, 4);
+    rc = st25_reg_write_masked(dev, ST25_REG_ANALOG_2, temp, ST25_ANALOG_2_AFE_TD);
 
-    LOG_INF("Adjust regulators command");
-    rc = st25_write_cmd(dev, ST25_CMD_ADJ_REG);
+    // Calibrate regulators
+    rc = st25_reg_set_bits(dev, ST25_REG_GENERAL, ST25_GENERAL_REG_S);
+    rc = st25_cmd_write(dev, ST25_CMD_ADJ_REG);
+    // Wait for i_dict irq
+    attempts = 0;
+    while(attempts < 5)
+    {
+        if (irq_status.bits.i_dct) break;
+        attempts++;
+        k_msleep(5);
+    }
+    if (attempts == 5)
+    {
+        LOG_WRN("Adjust regulator cmd timeout.");
+        return -ETIME;
+    }
+
+    // Collision detection
+    temp = FIELD_PREP(ST25_CORREL_4_COLL_LVL, 7);
+    st25_reg_write_masked(dev, ST25_REG_CORREL_4, temp, ST25_CORREL_4_COLL_LVL);
+
+    st25_reg_set_bits(dev, ST25_REG_RX_PROTOCOL, ST25_RX_PROTOCOL_ANTCTL);
 
     return rc;
 }
 
-static int st25_read_tag(const struct device *dev)
+static int st25_read_tag(const struct device *dev, uint8_t block_num, uint8_t buf)
 {
     int rc = 0;
 
-    // Set mode and bitrates
-    uint8_t mode = FIELD_PREP(ST25_PROTOCOL_MODE_FIELD, ST25_PROTOCOL_MODE_NFCV);
-    rc = st25_write_reg(dev, ST25_REG_PROTOCOL, &mode, 1);
+    // Enable TX and RX
+    int set = FIELD_PREP(ST25_OP_RX_EN_FIELD, 1) | FIELD_PREP(ST25_OP_TX_EN_FIELD, 1);
+    rc = st25_reg_write_masked(dev, ST25_REG_OP, set, ST25_OP_RX_EN_FIELD | ST25_OP_TX_EN_FIELD);
+
+    // Wait for guard time
+    k_msleep(6);
+
+    // Operation mode
+    uint8_t temp = FIELD_PREP(ST25_PROTOCOL_MODE_FIELD, ST25_PROTOCOL_MODE_NFCV);
+    rc = st25_reg_write_masked(dev, ST25_REG_PROTOCOL, temp, ST25_PROTOCOL_MODE_FIELD);
+
+    // Use OOK tx modulation
+    rc = st25_reg_clear_bits(dev, ST25_REG_PROTOCOL, ST25_TX_PROTOCOL_TR_AM);
+
+    // Configure filters (lpf = 2 hpf = 0)
+    temp = FIELD_PREP(ST25_RX_DIGITAL_HPF | ST25_RX_DIGITAL_LPF, 8);
+    rc = st25_reg_write_masked(dev,
+                                ST25_REG_RX_DIGITAL,
+                                temp,
+                                ST25_RX_DIGITAL_HPF | ST25_RX_DIGITAL_LPF);
+
+    // Configure IIR
+    temp = FIELD_PREP(ST25_CORREL_1_IIR1 | ST25_CORREL_1_IIR2, 0xC0);
+    rc = st25_reg_write_masked(dev,
+                                ST25_REG_CORREL_1,
+                                temp,
+                                ST25_CORREL_1_IIR1 | ST25_CORREL_1_IIR2);
 
     // Stop all activities
-    LOG_INF("Stop activities command");
-    rc = st25_write_cmd(dev, ST25_CMD_STOP_ACT);
+    rc = st25_cmd_write(dev, ST25_CMD_STOP_ACT);
 
     // Clear RX gain
-    LOG_INF("Clear activities command");
-    rc = st25_write_cmd(dev, ST25_CMD_CLR_RX_GAIN);
+    rc = st25_cmd_write(dev, ST25_CMD_CLR_RX_GAIN);
 
-    // Configure timers
+    // Parity and crc for TX
+    rc = st25_reg_set_bits(dev, ST25_REG_TX_PROTOCOL, ST25_TX_PROTOCOL_CRC | ST25_TX_PROTOCOL_PAR);
 
-    // Clear FIFO
-    rc = st25_write_cmd(dev, ST25_CMD_CLR_FIFO);
+    // Parity and CRC for RX
+    rc = st25_reg_set_bits(dev, ST25_REG_RX_PROTOCOL, ST25_RX_PROTOCOL_CRC | ST25_RX_PROTOCOL_PAR);
 
-    // Define TX length
-    int read_cmd_len = 3;
-    uint8_t bytes_to_tx = FIELD_PREP(ST25_FIFO_FRAME2_NTXLSB_FIELD, read_cmd_len) | FIELD_PREP(0b111, 1);
-    rc = st25_write_reg(dev, ST25_REG_FIFO_FRAME2, &bytes_to_tx, 1);
+    // Enable AGC
+    rc = st25_reg_set_bits(dev, ST25_REG_RX_DIGITAL, ST25_RX_DIGITAL_AGC);
 
-    // Write TX bytes to FIFO
-    uint8_t tx_bytes[] = {0x02, 0x20, 0x01};
-    rc = st25_write_reg(dev, ST25_REG_FIFO, tx_bytes, 3);
+    // Unmask RX
+    st25_cmd_write(dev, ST25_CMD_UNMASK_RX);
 
-    // uint8_t read1[5] = {0};
-    // rc = st25_read_reg(dev, ST25_REG_FIFO, read1, 3);
-    // LOG_ERR("%x %x %x", read1[1], read1[2], read1[3]);
+    // Define TX length and write to FIFO
+    temp = FIELD_PREP(ST25_FIFO_FRAME2_NTXLSB_FIELD, 3);
+    st25_reg_write_masked(dev, ST25_REG_FIFO_FRAME2, temp, ST25_FIFO_FRAME2_NTXLSB_FIELD);
+    uint8_t read_tag_cmd[] = {0x02, 0x20, 0x01};
+    st25_reg_write(dev, ST25_REG_FIFO, read_tag_cmd, 3);
 
-    // Send direct command to tx
-    // rc = st25_write_cmd(dev, ST25_CMD_UNMASK_RX);
+    uint8_t test;
+    st25_read_reg(dev, ST25_REG_FIFO_SR1, &test, 1);
+    LOG_INF("fsr1 %x", test);
+    st25_read_reg(dev, ST25_REG_FIFO_SR2, &test, 1);
+    LOG_INF("fsr2 %x", test);
 
-    LOG_INF("TX data command");
-    rc = st25_write_cmd(dev, ST25_CMD_TX_DATA);
+    st25_cmd_write(dev, ST25_CMD_TX_DATA);
 
-    rc = st25_write_cmd(dev, ST25_CMD_TX_EOF);
+    st25_read_reg(dev, ST25_REG_FIFO_SR1, &test, 1);
+    LOG_INF("fsr1 %x", test);
+    st25_read_reg(dev, ST25_REG_FIFO_SR2, &test, 1);
+    LOG_INF("fsr2 %x", test);
+
+    uint8_t fifo_buf[5];
+    rc = st25_read_reg(dev, ST25_REG_FIFO, fifo_buf, 3);
+    printk("%x - ", rc);
+    for (int i=0; i<3; i++)
+    {
+        printk("%x ", fifo_buf[i]);
+    }
+    printk("\n");
 }
 
 static int st25_config_gpio(const struct device *dev)
@@ -376,7 +426,7 @@ static int st25r100_init(const struct device *dev)
 {
     int rc;
 
-    k_msleep(5000);
+    k_msleep(2000);
 
     // Config the work handler for IRQs before config GPIO
     st25_irq_work.dev = dev;
@@ -384,28 +434,28 @@ static int st25r100_init(const struct device *dev)
 
     rc = st25_config_gpio(dev);
 
-    st25_reset(dev);
+    // Set to default state
+    st25_cmd_write(dev, ST25_CMD_SET_DEFAULT);
     k_msleep(100);
 
     // Check for chip ID
-    uint8_t buf[2] = {0};
-    rc = st25_read_reg(dev, ST25_REG_ID, buf, 2);
+    uint8_t wai;
+    rc = st25_read_reg(dev, ST25_REG_ID, &wai, 1);
     if (rc != 0)
     {
         LOG_WRN("Failed to read chip ID: %d", rc);
         return -EIO;
     }
-    if (buf[1] != ST25_VAL_ID)
+    if (wai != ST25_VAL_ID)
     {
-        LOG_ERR("Chip ID did not match (expected 0x%x, got 0x%x)", ST25_VAL_ID, buf[1]);
+        LOG_ERR("Chip ID did not match (expected 0x%x, got 0x%x)", ST25_VAL_ID, wai);
         return -ENODEV;
     }
     LOG_INF("ST25 chip ID matched.");
 
-
-    // TEMP
     st25_ready_mode(dev);
-    st25_read_tag(dev);
+    uint8_t t;
+    st25_read_tag(dev, 1, &t);
 
     struct nfc_cfg *c = dev->config;
     LOG_WRN("irq pin: %d", gpio_pin_get_dt(&c->irq_gpio));
