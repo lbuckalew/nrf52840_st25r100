@@ -39,6 +39,8 @@
 #include "rfal_nfc.h"
 #include "rfal_t2t.h"
 
+#include "st25r200_com.h"
+
 #if RFAL_SUPPORT_CE && RFAL_FEATURE_LISTEN_MODE
 #include "demo_ce.h"
 #endif /* RFAL_FEATURE_LISTEN_MODE */
@@ -403,7 +405,6 @@ void demoCycle(void)
 
             /*******************************************************************************/
         case DEMO_ST_DISCOVERY:
-
             if (rfalNfcIsDevActivated(rfalNfcGetState())) {
                 rfalNfcGetActiveDevice(&nfcDevice);
 
@@ -672,6 +673,13 @@ static void demoNfcv(rfalNfcvListenDevice *nfcvDev)
     * Read block using Read Single Block command
     * with addressed mode (uid != NULL) or selected mode (uid == NULL)
     */
+    for (int i=0; i<=0x3F; i++)
+    {
+        uint8_t val;
+        st25r200ReadRegister(i, &val);
+        printk("%x: %x\n", i, val);
+    }
+    
     err = rfalNfcvPollerReadSingleBlock(reqFlag, uid, blockNum, rxBuf, sizeof(rxBuf), &rcvLen);
     platformLog(" Read Block: %s %s\r\n", (err != ERR_NONE) ? "FAIL": "OK Data:", (err != ERR_NONE) ? "" : hex2Str( &rxBuf[1], DEMO_NFCV_BLOCK_LEN));
 
