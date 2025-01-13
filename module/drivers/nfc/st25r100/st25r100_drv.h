@@ -40,6 +40,7 @@
 
 #define ST25_REG_CORREL_5 0x0D
 #define ST25_CORREL_5_SUBC_EN 1 << 4
+#define ST25_CORREL_5_IIR_F 0x07
 
 #define ST25_REG_DR1 0x0F
 #define ST25_DR1_OSC_OK_FIELD 1 << 5

@@ -48,7 +48,7 @@ union {
     uint32_t val;
 } irq_status;
 
-static int st25_read_reg(const struct device *dev, uint8_t reg, uint8_t *buff, size_t len)
+static int st25_reg_read(const struct device *dev, uint8_t reg, uint8_t *buff, size_t len)
 {
     int err;
     const struct nfc_cfg *cfg = dev->config;
@@ -121,7 +121,7 @@ static int st25_reg_set_bits(const struct device *dev, uint8_t reg, uint8_t mask
 {
     // Read register
     uint8_t old_val;
-    int rc = st25_read_reg(dev, reg, &old_val, 1);
+    int rc = st25_reg_read(dev, reg, &old_val, 1);
 
     // Set new bits based on the mask
     if (rc == 0)
@@ -138,7 +138,7 @@ static int st25_reg_clear_bits(const struct device *dev, uint8_t reg, uint8_t ma
 {
     // Read register
     uint8_t old_val;
-    int rc = st25_read_reg(dev, reg, &old_val, 1);
+    int rc = st25_reg_read(dev, reg, &old_val, 1);
 
     // Set new bits based on the mask
     if (rc == 0)
@@ -155,7 +155,7 @@ static int st25_reg_write_masked(const struct device *dev, uint8_t reg, uint8_t 
 {
     // Read register
     uint8_t old_val;
-    int rc = st25_read_reg(dev, reg, &old_val, 1);
+    int rc = st25_reg_read(dev, reg, &old_val, 1);
 
     // Set new bits based on the mask
     if (rc == 0)
@@ -176,7 +176,7 @@ static void st25_irq_wh(struct k_work *w)
     const struct nfc_cfg *cfg = dev->config;
 
     uint8_t data[3];
-    int rc = st25_read_reg(dev, ST25_REG_IRQ_SR1, data, sizeof(data));
+    int rc = st25_reg_read(dev, ST25_REG_IRQ_SR1, data, sizeof(data));
 
     if (rc == 0)
     {
@@ -245,7 +245,7 @@ static int st25_ready_mode(const struct device *dev)
     attempts = 0;
     while(attempts < 5)
     {
-        rc = st25_read_reg(dev, ST25_REG_DR1, &temp, 1);
+        rc = st25_reg_read(dev, ST25_REG_DR1, &temp, 1);
         if (temp & ST25_DR1_AGD_OK_FIELD) break;
         attempts++;
         k_msleep(5);
@@ -273,14 +273,17 @@ static int st25_ready_mode(const struct device *dev)
     rc = st25_reg_clear_bits(dev, ST25_REG_TX_DRIVER, ST25_TX_DRIVER_DRES);
 
     // Enable subcarrier
-    rc = st25_reg_set_bits(dev, ST25_REG_CORREL_5, ST25_CORREL_5_SUBC_EN);
+    temp = FIELD_PREP(ST25_CORREL_5_SUBC_EN, 1) | FIELD_PREP(ST25_CORREL_5_IIR_F, 4);
+    rc = st25_reg_write_masked(dev, ST25_REG_CORREL_5, temp, ST25_CORREL_5_SUBC_EN | ST25_CORREL_5_IIR_F);
+
+    // rc = st25_reg_set_bits(dev, ST25_REG_CORREL_5, ST25_CORREL_5_SUBC_EN);
 
     // Set afe gain
     temp = FIELD_PREP(ST25_ANALOG_2_AFE_TD, 4);
     rc = st25_reg_write_masked(dev, ST25_REG_ANALOG_2, temp, ST25_ANALOG_2_AFE_TD);
 
     // Calibrate regulators
-    rc = st25_reg_set_bits(dev, ST25_REG_GENERAL, ST25_GENERAL_REG_S);
+    rc = st25_reg_clear_bits(dev, ST25_REG_GENERAL, ST25_GENERAL_REG_S);
     rc = st25_cmd_write(dev, ST25_CMD_ADJ_REG);
     // Wait for i_dict irq
     attempts = 0;
@@ -297,8 +300,8 @@ static int st25_ready_mode(const struct device *dev)
     }
 
     // Collision detection
-    temp = FIELD_PREP(ST25_CORREL_4_COLL_LVL, 7);
-    st25_reg_write_masked(dev, ST25_REG_CORREL_4, temp, ST25_CORREL_4_COLL_LVL);
+    // temp = FIELD_PREP(ST25_CORREL_4_COLL_LVL, 7);
+    // st25_reg_write_masked(dev, ST25_REG_CORREL_4, temp, ST25_CORREL_4_COLL_LVL);
 
     st25_reg_set_bits(dev, ST25_REG_RX_PROTOCOL, ST25_RX_PROTOCOL_ANTCTL);
 
@@ -355,6 +358,13 @@ static int st25_read_tag(const struct device *dev, uint8_t block_num, uint8_t bu
     // Unmask RX
     st25_cmd_write(dev, ST25_CMD_UNMASK_RX);
 
+    for(int i=0; i<=0x3F; i++)
+    {
+        uint8_t v;
+        st25_reg_read(dev, i, &v, 1);
+        LOG_INF("%x: %x", i, v);
+    }
+
     // Define TX length and write to FIFO
     temp = FIELD_PREP(ST25_FIFO_FRAME2_NTXLSB_FIELD, 3);
     st25_reg_write_masked(dev, ST25_REG_FIFO_FRAME2, temp, ST25_FIFO_FRAME2_NTXLSB_FIELD);
@@ -362,22 +372,22 @@ static int st25_read_tag(const struct device *dev, uint8_t block_num, uint8_t bu
     st25_reg_write(dev, ST25_REG_FIFO, read_tag_cmd, 3);
 
     uint8_t test;
-    st25_read_reg(dev, ST25_REG_FIFO_SR1, &test, 1);
+    st25_reg_read(dev, ST25_REG_FIFO_SR1, &test, 1);
     LOG_INF("fsr1 %x", test);
-    st25_read_reg(dev, ST25_REG_FIFO_SR2, &test, 1);
+    st25_reg_read(dev, ST25_REG_FIFO_SR2, &test, 1);
     LOG_INF("fsr2 %x", test);
 
     st25_cmd_write(dev, ST25_CMD_TX_DATA);
 
-    st25_read_reg(dev, ST25_REG_FIFO_SR1, &test, 1);
+    st25_reg_read(dev, ST25_REG_FIFO_SR1, &test, 1);
     LOG_INF("fsr1 %x", test);
-    st25_read_reg(dev, ST25_REG_FIFO_SR2, &test, 1);
+    st25_reg_read(dev, ST25_REG_FIFO_SR2, &test, 1);
     LOG_INF("fsr2 %x", test);
 
-    uint8_t fifo_buf[5];
-    rc = st25_read_reg(dev, ST25_REG_FIFO, fifo_buf, 3);
+    uint8_t fifo_buf[6];
+    rc = st25_reg_read(dev, ST25_REG_FIFO, fifo_buf, 5);
     printk("%x - ", rc);
-    for (int i=0; i<3; i++)
+    for (int i=0; i<5; i++)
     {
         printk("%x ", fifo_buf[i]);
     }
@@ -440,7 +450,7 @@ static int st25r100_init(const struct device *dev)
 
     // Check for chip ID
     uint8_t wai;
-    rc = st25_read_reg(dev, ST25_REG_ID, &wai, 1);
+    rc = st25_reg_read(dev, ST25_REG_ID, &wai, 1);
     if (rc != 0)
     {
         LOG_WRN("Failed to read chip ID: %d", rc);
