@@ -272,11 +272,9 @@ static int st25_ready_mode(const struct device *dev)
     // Set RFO driver resistance
     rc = st25_reg_clear_bits(dev, ST25_REG_TX_DRIVER, ST25_TX_DRIVER_DRES);
 
-    // Enable subcarrier
+    // Enable subcarrier and set IIR
     temp = FIELD_PREP(ST25_CORREL_5_SUBC_EN, 1) | FIELD_PREP(ST25_CORREL_5_IIR_F, 4);
     rc = st25_reg_write_masked(dev, ST25_REG_CORREL_5, temp, ST25_CORREL_5_SUBC_EN | ST25_CORREL_5_IIR_F);
-
-    // rc = st25_reg_set_bits(dev, ST25_REG_CORREL_5, ST25_CORREL_5_SUBC_EN);
 
     // Set afe gain
     temp = FIELD_PREP(ST25_ANALOG_2_AFE_TD, 4);
@@ -299,11 +297,9 @@ static int st25_ready_mode(const struct device *dev)
         return -ETIME;
     }
 
-    // Collision detection
-    // temp = FIELD_PREP(ST25_CORREL_4_COLL_LVL, 7);
-    // st25_reg_write_masked(dev, ST25_REG_CORREL_4, temp, ST25_CORREL_4_COLL_LVL);
-
-    st25_reg_set_bits(dev, ST25_REG_RX_PROTOCOL, ST25_RX_PROTOCOL_ANTCTL);
+    // Set no response timer value
+    temp = 0x41;
+    rc = st25_reg_write(dev, ST25_REG_MASK_RX_TIMER, &temp, 1);
 
     return rc;
 }
