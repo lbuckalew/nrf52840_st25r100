@@ -1,48 +1,69 @@
-/*
- * Copyright (c) 2016 Intel Corporation
- *
- * SPDX-License-Identifier: Apache-2.0
- */
+#include "st25r100_drv.h"
 
 #include <stdio.h>
 #include <zephyr/kernel.h>
-#include <zephyr/drivers/gpio.h>
+#include <zephyr/device.h>
+#include <zephyr/random/random.h>
+#include <zephyr/logging/log.h>
 
-/* 1000 msec = 1 sec */
-#define SLEEP_TIME_MS   1000
+LOG_MODULE_REGISTER(main, CONFIG_LOG_DEFAULT_LEVEL);
 
-/* The devicetree node identifier for the "led0" alias. */
-#define LED0_NODE DT_ALIAS(led0)
-
-/*
- * A build error on this line means your board is unsupported.
- * See the sample documentation for information on how to fix this.
- */
-static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
+// This is how to write non-maintainable overly complicated code, but I'm having fun.
+struct dummy_bytes {
+	uint8_t a: 8;
+	uint8_t b: 8;
+	uint8_t c: 8;
+	uint8_t d: 8;
+};
+union dummy_data {
+	struct dummy_bytes bytes;
+	uint32_t parent_val;
+} write_data;
 
 int main(void)
 {
-	int ret;
-	bool led_state = true;
-
-	if (!gpio_is_ready_dt(&led)) {
-		return 0;
+	const struct device *dev = device_get_binding(DEVICE_DT_NAME(DT_NODELABEL(st25)));
+	if (dev == NULL)
+	{
+		LOG_ERR("Could not find NFC device.");
+		return -ENODEV;
 	}
+	LOG_INF("NFC device found. It loves you very much.");
 
-	ret = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
-	if (ret < 0) {
-		return 0;
-	}
+	while (1)
+	{
+		// Random val for write to test read matches
+		write_data.parent_val = sys_rand32_get();
+		LOG_INF("%x: %x %x %x %x",
+				write_data.parent_val,
+				write_data.bytes.a,
+				write_data.bytes.b,
+				write_data.bytes.c,
+				write_data.bytes.d);
 
-	while (1) {
-		ret = gpio_pin_toggle_dt(&led);
-		if (ret < 0) {
-			return 0;
+		// unsafe {
+		st25_write_tag(dev, 0, (uint8_t*)&write_data); // very brain
+
+		uint8_t read_buf[3*4] = {0};
+		st25_read_tag(dev, 0, 3, read_buf);
+		for (int i=0; i<sizeof(read_buf); i++)
+		{
+			printk("%x ", read_buf[i]);
 		}
+		printk("\n");
 
-		led_state = !led_state;
-		// printf("LED state: %s\n", led_state ? "ON" : "OFF");
-		k_msleep(SLEEP_TIME_MS);
+		// Check block 0 to verify write
+		union dummy_data check;
+		check.parent_val = *(uint32_t*)read_buf; // everything is fine
+		memset(read_buf, 0, sizeof(read_buf));
+
+		if (check.parent_val != write_data.parent_val)
+		{
+			LOG_ERR("Written bytes did not match read bytes. (read 0x%x)", check.parent_val);
+		}
+		// }
+
+		k_msleep(5000);
 	}
 	return 0;
 }

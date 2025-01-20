@@ -1,6 +1,8 @@
 #ifndef ST25R100_DRV_H
 #define ST25R100_DRV_H
 
+#include <zephyr/device.h>
+
 #define ST25_REG_OP 0x00
 #define ST25_OP_WU_EN_FIELD 1
 #define ST25_OP_EN_FIELD 1 << 1
@@ -97,5 +99,9 @@
 #define NFC_OPTIX_START_BLOCK 0
 #define NFC_OPTIX_UUID_NUM_BLOCKS 2
 #define NFC_READ_MLT_BLOCKS_PL_LEN 4
+#define NFC_WRITE_BLOCK_PL_LEN 7
+
+int st25_write_tag(const struct device *dev, uint8_t blk, uint8_t *buf);
+int st25_read_tag(const struct device *dev, uint8_t start_blk, uint8_t blks, uint8_t *buf);
 
 #endif

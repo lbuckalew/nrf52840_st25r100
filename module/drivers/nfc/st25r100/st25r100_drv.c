@@ -265,7 +265,7 @@ static int st25_wake(const struct device *dev)
 static int st25_sleep(const struct device *dev)
 {
     const struct nfc_cfg *cfg = dev->config;
-    gpio_pin_set_dt(&cfg->reset_gpio, 1);
+    // gpio_pin_set_dt(&cfg->reset_gpio, 1);
     return 0;
 }
 
@@ -353,7 +353,96 @@ static int st25_ready_mode(const struct device *dev)
     return rc;
 }
 
-static int st25_read_tag(const struct device *dev, uint8_t start_blk, uint8_t *buf, uint8_t blks)
+/**************************************************************************************************
+ * @brief Writes a single block of data (4 bytes) to the provided block address.
+ * 
+ * @param dev
+ * @param blk The block number to write data to
+ * @param buf A buffer containing data to write
+ * @return int
+ *************************************************************************************************/
+int st25_write_tag(const struct device *dev, uint8_t blk, uint8_t *buf)
+{
+    int rc = 0;
+
+    st25_wake(dev);
+
+    // Enable TX and RX
+    int set = FIELD_PREP(ST25_OP_RX_EN_FIELD, 1) | FIELD_PREP(ST25_OP_TX_EN_FIELD, 1);
+    rc = st25_reg_write_masked(dev, ST25_REG_OP, set, ST25_OP_RX_EN_FIELD | ST25_OP_TX_EN_FIELD);
+
+    // Wait for guard time
+    k_msleep(6);
+
+    // Stop all activities
+    rc = st25_cmd_write(dev, ST25_CMD_STOP_ACT);
+
+    // Clear RX gain
+    rc = st25_cmd_write(dev, ST25_CMD_CLR_RX_GAIN);
+
+    // Unmask RX
+    st25_cmd_write(dev, ST25_CMD_UNMASK_RX);
+
+    // Define TX length and write to FIFO
+    uint8_t req_payload[NFC_WRITE_BLOCK_PL_LEN] = {0};
+    req_payload[0] = 0x02; // Op flags
+    req_payload[1] = 0x21; // Write block command
+    req_payload[2] = blk; // Start reading block num
+    if (sizeof(buf) != ST25R_BYTES_PER_BLOCK)
+    {
+        LOG_ERR("The write tag buffer did not have the correct length.");
+        return -ENOBUFS;
+    }
+    memcpy(req_payload + 3, buf, ST25R_BYTES_PER_BLOCK);
+    uint8_t temp = FIELD_PREP(ST25_FIFO_FRAME2_NTXLSB_FIELD, NFC_WRITE_BLOCK_PL_LEN);
+    st25_reg_write_masked(dev, ST25_REG_FIFO_FRAME2, temp, ST25_FIFO_FRAME2_NTXLSB_FIELD);
+    st25_reg_write(dev, ST25_REG_FIFO, req_payload, NFC_WRITE_BLOCK_PL_LEN);
+
+    uint8_t test;
+    st25_reg_read(dev, ST25_REG_FIFO_SR1, &test, 1);
+    LOG_INF("fsr1 %x", test);
+    st25_reg_read(dev, ST25_REG_FIFO_SR2, &test, 1);
+    LOG_INF("fsr2 %x", test);
+
+    st25_cmd_write(dev, ST25_CMD_TX_DATA);
+
+    // Wait for rxe irq
+    int attempts = 0;
+    while(attempts < 10)
+    {
+        if (irq_status.bits.i_rxe) break;
+        attempts++;
+        k_msleep(5);
+    }
+    if (attempts == 10)
+    {
+        LOG_WRN("RXE timeout.");
+        return -ETIME;
+    }
+
+    uint16_t bytes_in_fifo = 0;
+    st25_reg_read(dev, ST25_REG_FIFO_SR1, &test, 1);
+    bytes_in_fifo = test;
+    LOG_INF("fsr1 %x", test);
+    st25_reg_read(dev, ST25_REG_FIFO_SR2, &test, 1);
+    LOG_INF("fsr2 %x", test);
+    bytes_in_fifo |= (uint16_t)(test << 8);
+
+    uint8_t fifo_buf[bytes_in_fifo];
+    rc = st25_reg_read(dev, ST25_REG_FIFO, fifo_buf, bytes_in_fifo);
+    printk("Write tag internal buffer: ");
+    for (int i=0; i<NFC_WRITE_BLOCK_PL_LEN; i++)
+    {
+        printk("%x ", fifo_buf[i]);
+    }
+    printk("\n");
+
+    st25_sleep(dev);
+
+    return 0;
+}
+
+int st25_read_tag(const struct device *dev, uint8_t start_blk, uint8_t blks, uint8_t *buf)
 {
     int rc = 0;
 
@@ -417,10 +506,19 @@ static int st25_read_tag(const struct device *dev, uint8_t start_blk, uint8_t *b
 
     uint8_t fifo_buf[bytes_in_fifo];
     rc = st25_reg_read(dev, ST25_REG_FIFO, fifo_buf, bytes_in_fifo);
+    printk("Internal buffer: ");
 
-    if (blks*4 >= bytes_in_fifo - 3)
+    // The tag being read returns the data being asked for (each block contains 4 bytes) along with
+    // a leading response code (0 for success) and 2 trailing bytes as a checksum. These 3 extra
+    // bytes need not be transferred to the buffer given as an argument to this function.
+    if (blks*ST25R_BYTES_PER_BLOCK >= bytes_in_fifo - 3)
     {
-        memcpy(buf, fifo_buf + 1, bytes_in_fifo);
+        memcpy(buf, fifo_buf + 1, bytes_in_fifo - 3);
+    }
+    else
+    {
+        LOG_ERR("There were more bytes to read in the fifo than available size of buffer.");
+        return -ENOMEM;
     }
 
     st25_sleep(dev);
@@ -498,16 +596,6 @@ static int st25r100_init(const struct device *dev)
     LOG_INF("ST25 chip ID matched.");
 
     st25_ready_mode(dev);
-    uint8_t tag_data[3*4] = {0};
-    st25_read_tag(dev, 0, tag_data, 3);
-    for (int i=0; i<sizeof(tag_data); i++)
-    {
-        printk("%x ", tag_data[i]);
-    }
-    printk("\n");
-
-    struct nfc_cfg *c = dev->config;
-    LOG_WRN("irq pin: %d", gpio_pin_get_dt(&c->irq_gpio));
 
     return 0;
 }
